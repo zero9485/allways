@@ -144,6 +144,23 @@ def reject_synapse(synapse: bt.Synapse, reason: str, context: str = '') -> None:
         bt.logging.debug(f'{context}: {reason}')
 
 
+def parse_reservation_data(res_data: tuple) -> Optional[Tuple[Optional[str], int, int, int]]:
+    """Normalize reservation tuple shape from contract client.
+
+    Accepts both legacy (tao, from, to) and newer (from_addr, tao, from, to).
+    Returns (from_addr_or_none, tao_amount, from_amount, to_amount), or None.
+    """
+    if not isinstance(res_data, tuple):
+        return None
+    if len(res_data) == 3 and all(isinstance(v, int) for v in res_data):
+        tao_amount, from_amount, to_amount = res_data
+        return (None, tao_amount, from_amount, to_amount)
+    if len(res_data) == 4 and isinstance(res_data[0], str) and all(isinstance(v, int) for v in res_data[1:]):
+        from_addr, tao_amount, from_amount, to_amount = res_data
+        return (from_addr, tao_amount, from_amount, to_amount)
+    return None
+
+
 # =============================================================================
 # MinerActivateSynapse handlers
 # =============================================================================
@@ -441,7 +458,14 @@ async def handle_swap_confirm(
                 reject_synapse(synapse, 'Reservation data not found', ctx)
                 return synapse
 
-            res_tao_amount, res_source_amount, res_dest_amount = res_data
+            parsed_res = parse_reservation_data(res_data)
+            if parsed_res is None:
+                reject_synapse(synapse, 'Invalid reservation data', ctx)
+                return synapse
+            reserved_from_address, res_tao_amount, res_source_amount, res_dest_amount = parsed_res
+            if reserved_from_address is not None and reserved_from_address != synapse.from_address:
+                reject_synapse(synapse, 'Source address does not match reservation owner', ctx)
+                return synapse
 
             commitment = load_swap_commitment(validator, miner)
             if commitment is None:

@@ -79,14 +79,14 @@ def make_validator(
     *,
     block: int = 1000,
     reserved_until: int = 2000,
-    reservation_data: tuple | None = (0, 345_000_000, 100_000, 345_000_000),
+    reservation_data: tuple | None = ('bc1-user', 345_000_000, 100_000, 345_000_000),
     providers: dict | None = None,
 ) -> MagicMock:
     """Build a Validator mock with default-happy contract/chain state.
 
     Individual tests override specific attributes to simulate each branch.
     reservation_data tuple mirrors the on-chain layout used by
-    handle_swap_confirm: (_, tao_amount, source_amount, dest_amount).
+    handle_swap_confirm: (from_addr, tao_amount, source_amount, dest_amount).
     """
     validator = MagicMock()
     validator.block = block
@@ -187,6 +187,13 @@ class TestReservationValidation:
         assert result.accepted is False
         assert 'Reservation data not found' in result.rejection_reason
 
+    def test_rejects_reservation_owner_mismatch(self):
+        """Confirmer must match the address that created the active reservation."""
+        validator = make_validator(reservation_data=('bc1-owner', 345_000_000, 100_000, 345_000_000))
+        result = run_handler(validator, make_synapse(from_address='bc1-attacker'))
+        assert result.accepted is False
+        assert 'does not match reservation owner' in result.rejection_reason
+
 
 # ---------------------------------------------------------------------------
 # Commitment and swap direction
@@ -240,7 +247,7 @@ class TestChainProviderValidation:
         """Without a valid signature over the tx hash from from_address, a caller
         could hijack someone else's on-chain source tx and redirect fulfillment
         to an attacker-controlled to_address."""
-        validator = make_validator(reservation_data=(345_000_000, 100_000, 345_000_000))
+        validator = make_validator(reservation_data=('bc1-user', 345_000_000, 100_000, 345_000_000))
         validator.axon_chain_providers['btc'].verify_from_proof.return_value = False
         result = run_handler(validator, make_synapse())
         assert result.accepted is False
@@ -310,7 +317,7 @@ class TestSourceTxVerification:
         """The contract-reserved amounts are authoritative. A queued entry
         must persist those, not any user-supplied value, so the later
         auto-initiate hashes match what the miner was reserved under."""
-        validator = make_validator(reservation_data=(0, 777_000_000, 55_000, 999_000_000))
+        validator = make_validator(reservation_data=('bc1-user', 777_000_000, 55_000, 999_000_000))
         validator.axon_chain_providers['btc'].verify_transaction.return_value = make_tx_info(
             confirmed=False,
             confirmations=1,
